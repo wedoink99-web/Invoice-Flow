@@ -1,0 +1,34 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Copy the app into the desktop folder and install
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          if (Test-Path www) { Remove-Item -Recurse -Force www }
+          Copy-Item -Recurse ../www www
+          npm install
+      - name: Build the EXE files
+        working-directory: desktop
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --win portable nsis --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InvoiceFlow-Windows
+          path: |
+            desktop/dist/InvoiceFlow-Portable.exe
+            desktop/dist/InvoiceFlow-Setup.exe
