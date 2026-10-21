@@ -1,0 +1,6 @@
+{
+  "appId": "za.co.signgirls.invoiceflow",
+  "appName": "InvoiceFlow",
+  "webDir": "www",
+  "server": { "androidScheme": "https" }
+}
