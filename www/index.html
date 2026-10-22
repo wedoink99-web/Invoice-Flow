@@ -339,6 +339,7 @@ function status(d){
     return 'Open';
   }
   var c=calc(d);
+  if(c.total>0.004&&c.credit>=c.total-0.004&&(c.paid-c.refunded)<=0.004)return 'Cancelled';
   if(c.balance<-0.004)return 'Credit';
   if(c.balance<=0.004)return 'Paid';
   if(d.due&&d.due<t)return 'Overdue';
@@ -427,6 +428,8 @@ function route(){
   if(name==='customer'||name==='statement')nav='customers';
   drawNav(nav);
   draft=name==='new'||name==='edit'?draft:null;
+  if(name!=='settings')pinOK=false;
+  if(name==='settings'&&pinSet()&&(!pinOK||Date.now()-pinAt>600000)){pinOK=false;vLock();window.scrollTo(0,0);return}
   var V={dashboard:vDashboard,invoices:function(){vDocs('invoice')},quotes:function(){vDocs('quote')},orders:function(){vDocs('order')},statements:vStatements,customers:vCustomers,
     customer:function(){vCustomer(a)},items:vItems,payments:vPayments,reports:vReports,settings:vSettings,
     view:function(){vView(a)},statement:function(){vStatement(a)},
@@ -468,7 +471,7 @@ function vDashboard(){
 var LST={invoice:{q:'',f:'all'},quote:{q:'',f:'all'},order:{q:'',f:'all'}};
 function vDocs(type){
   var isInv=type==='invoice',st=LST[type];
-  var filters=isInv?['all','Unpaid','Overdue','Part paid','Paid','Credit']:type==='order'?['all','Open','Invoiced','Cancelled']:['all','Open','Accepted','Declined','Invoiced','Expired'];
+  var filters=isInv?['all','Unpaid','Overdue','Part paid','Paid','Credit','Cancelled']:type==='order'?['all','Open','Invoiced','Cancelled']:['all','Open','Accepted','Declined','Invoiced','Expired'];
   setMain('<div class="head"><h1>'+T(type).Plural+'</h1><a class="btn primary" href="#new/'+type+'">+ New '+type+'</a></div>'+
     '<div class="tools"><input type="search" id="q" placeholder="Search number, customer or reference" value="'+esc(st.q)+'"><div class="chips" id="chips">'+
     filters.map(function(f){return '<button class="chip'+(st.f===f?' on':'')+'" data-f="'+f+'">'+(f==='all'?'All':f)+'</button>'}).join('')+'</div></div>'+
@@ -485,7 +488,7 @@ function vDocs(type){
       var c=calc(d),s=status(d);tot+=c.total;bal+=Math.max(0,c.balance);
       return '<tr data-href="view/'+d.id+'"><td><b>'+esc(d.number)+'</b></td><td>'+esc(custName(d.customerId))+'</td><td>'+fdate(d.date)+'</td><td>'+fdate(d.due)+'</td><td class="num">'+fmt(c.total)+'</td>'+(isInv?'<td class="num">'+fmt(c.balance)+'</td>':'')+'<td>'+badge(s)+'</td><td class="acts">'+
         (isInv&&c.balance>0.004?'<button class="btn sm" data-act="pay" data-id="'+d.id+'">Payment</button> ':'')+
-        '<a class="btn sm" href="#edit/'+d.id+'">Edit</a> <button class="btn sm danger" data-act="del-doc" data-id="'+d.id+'">Delete</button></td></tr>';
+        '<a class="btn sm" href="#edit/'+d.id+'">Edit</a>'+(isInv?'':' <button class="btn sm danger" data-act="del-doc" data-id="'+d.id+'">Delete</button>')+'</td></tr>';
     }).join(''):'<tr><td colspan="8" class="empty">'+(S.docs.some(function(d){return d.type===type})?'Nothing matches your search.':'No '+type+'s yet. Click <b>+ New '+type+'</b> to make your first one.')+'</td></tr>';
     $('#foot').innerHTML=list.length?'<tr><td colspan="4">'+list.length+' '+type+(list.length>1?'s':'')+'</td><td class="num">'+fmt(tot)+'</td>'+(isInv?'<td class="num">'+fmt(bal)+'</td>':'')+'<td colspan="2"></td></tr>':'';
   }
@@ -544,8 +547,8 @@ function vView(id){
     '<button class="btn" data-act="email" data-id="'+d.id+'">Email</button>'+'<button class="btn" data-act="wa" data-id="'+d.id+'">WhatsApp</button>'+
     '<button class="btn" data-act="print" data-id="'+d.id+'">Print / Save as PDF</button>'+
     '<button class="btn" data-act="dup-doc" data-id="'+d.id+'">Make a copy</button>'+
-    '<button class="btn danger" data-act="del-doc" data-id="'+d.id+'">Delete</button>';
-  setMain('<div class="head noprint"><div><h1>'+esc(d.number)+' '+badge(status(d))+'</h1><p class="sub">'+esc(custName(d.customerId))+'</p></div><div class="btns">'+btns+'</div></div>'+paperHTML(d));
+    (isInv?(status(d)!=='Cancelled'?'<button class="btn danger" data-act="cancel-inv" data-id="'+d.id+'">Cancel invoice</button>':''):'<button class="btn danger" data-act="del-doc" data-id="'+d.id+'">Delete</button>');
+  setMain('<div class="head noprint"><div><h1>'+esc(d.number)+' '+badge(status(d))+'</h1><p class="sub">'+esc(custName(d.customerId))+'</p></div><div class="btns">'+btns+'</div></div>'+paperHTML(d)+(isInv?historyHTML(d):''));
 }
 function docTitle(d){return d.number+' - '+custName(d.customerId)}
 function doPrint(title){
@@ -692,22 +695,63 @@ function fillFromItem(i,tr){
   if(it.track&&draft.type==='invoice'){var oh=onHand(it);if(oh<=0)toast(it.name+' is out of stock.','bad');else if(+it.reorder>0&&oh<=+it.reorder)toast('Low stock: only '+fqty(oh)+' of '+it.name+' left.')}
   tr.querySelector('[data-lf=desc]').value=l.desc;tr.querySelector('[data-lf=price]').value=l.price;tr.querySelector('[data-lf=tax]').checked=l.tax;
 }
-function commitDraft(){
+function lastEditor(){try{return localStorage.getItem('invoiceflow.editor')||''}catch(e){return ''}}
+function editorNames(){var m={};S.docs.forEach(function(d){(d.edits||[]).forEach(function(e){if(e.by)m[e.by]=1})});var l=lastEditor();if(l)m[l]=1;return Object.keys(m).sort()}
+function addEdit(d,by,reason,change,extra){d.edits=d.edits||[];d.edits.push(Object.assign({id:uid(),at:new Date().toISOString(),by:by,reason:reason,change:change},extra||{}))}
+function auditModal(title,intro,okLabel,cb){
+  return modal(title,'<p style="margin-top:0">'+intro+'</p><div class="field"><label>Your name (who is making this change)</label><input name="by" required list="edlist" value="'+esc(lastEditor())+'" autocomplete="off"></div><datalist id="edlist">'+editorNames().map(function(n){return '<option value="'+esc(n)+'"></option>'}).join('')+'</datalist><div class="field"><label>Reason for the change</label><textarea name="reason" rows="3" required placeholder="e.g. Customer asked for a different size"></textarea></div>',
+    {ok:okLabel,onOk:function(d){var f=formData(d),by=(f.by||'').trim(),reason=(f.reason||'').trim();if(!by||!reason)return false;try{localStorage.setItem('invoiceflow.editor',by)}catch(e){}return cb(by,reason)}});
+}
+function lineKey(l){return [String(l.desc).trim(),+l.qty||0,+l.price||0,+l.disc||0,l.tax?1:0].join('|')}
+function describeChange(a,b){
+  var out=[];
+  [['number','Number'],['customerId','Customer'],['date','Date'],['due','Due date'],['ref','Reference'],['salesperson','Salesperson'],['discount','Discount %'],['shipping','Delivery'],['notes','Notes']].forEach(function(x){
+    var p=a[x[0]]||'',q=b[x[0]]||'';if(String(p)===String(q))return;
+    if(x[0]==='customerId')out.push('Customer: '+custName(p)+' → '+custName(q));
+    else if(x[0]==='notes')out.push('Notes changed');
+    else if(x[0]==='date'||x[0]==='due')out.push(x[1]+': '+fdate(p)+' → '+fdate(q));
+    else out.push(x[1]+': '+(p||'(blank)')+' → '+(q||'(blank)'));
+  });
+  if(a.lines.map(lineKey).join('~')!==b.lines.map(lineKey).join('~'))out.push('Lines changed');
+  var ta=calc(a).total,tb=calc(b).total;if(Math.abs(ta-tb)>0.004)out.push('Total: '+fmt(ta)+' → '+fmt(tb));
+  return out.join('; ')||'No visible change';
+}
+function snapshotDoc(d){return{number:d.number,customerId:d.customerId,date:d.date,due:d.due,ref:d.ref,salesperson:d.salesperson||'',discount:d.discount,shipping:d.shipping,notes:d.notes,lines:clone(d.lines),total:calc(d).total}}
+function draftProblem(){
   var d=draft;
-  if(!d.customerId){toast('Choose a customer first.','bad');$('#e-cust').focus();return null}
+  if(!d.customerId)return['Choose a customer first.','#e-cust'];
   var keep=d.lines.filter(function(l){return String(l.desc).trim()||+l.price});
-  if(!keep.length){toast('Add at least one line with a description or price.','bad');return null}
+  if(!keep.length)return['Add at least one line with a description or price.',null];
+  if(!String(d.number).trim())return['Please type a number.','#e-num'];
+  var num=String(d.number).trim();
+  if(S.docs.some(function(x){return x.type===d.type&&x.number===num&&x.id!==d.id}))return['That number is already used. Pick a different one.','#e-num'];
+  return null;
+}
+function commitDraft(audit){
+  var d=draft;
+  var pm=draftProblem();if(pm){toast(pm[0],'bad');var el=pm[1]&&$(pm[1]);if(el)el.focus();return null}
+  var keep=d.lines.filter(function(l){return String(l.desc).trim()||+l.price});
   d.number=String(d.number).trim();
-  if(!d.number){toast('Please type a number.','bad');return null}
-  if(S.docs.some(function(x){return x.type===d.type&&x.number===d.number&&x.id!==d.id})){toast('That number is already used. Pick a different one.','bad');return null}
   d.lines=keep.map(function(l){var o={desc:String(l.desc).trim(),qty:+l.qty||0,price:+l.price||0,disc:+l.disc||0,tax:!!l.tax};if(l.itemId)o.itemId=l.itemId;return o});
   d.discount=+d.discount||0;d.shipping=+d.shipping||0;
-  if(d.isNew&&d.number===nextNumber(d.type))bumpNumber(d.type);
-  var wasNew=d.isNew;delete d.isNew;
   var idx=S.docs.findIndex(function(x){return x.id===d.id});
+  if(idx>-1&&audit&&d.type==='invoice'){var old=S.docs[idx];addEdit(d,audit.by,audit.reason,describeChange(old,d),{before:snapshotDoc(old)})}
+  if(d.isNew&&d.number===nextNumber(d.type))bumpNumber(d.type);
+  delete d.isNew;
   if(idx>-1)S.docs[idx]=d;else S.docs.push(d);
   save();draft=null;toast(T(d.type).Word+' '+d.number+' saved');
   return d;
+}
+function saveDraft(after){
+  if(draft.type==='invoice'&&!draft.isNew){
+    var pm=draftProblem();if(pm){toast(pm[0],'bad');var el=pm[1]&&$(pm[1]);if(el)el.focus();return}
+    auditModal('Save changes to '+esc(draft.number),'Invoices are a financial record, so every change must say who made it and why. This is kept in the invoice’s change history.','Save changes',function(by,reason){var d=commitDraft({by:by,reason:reason});if(!d)return false;after(d)});
+  }else{var d=commitDraft();if(d)after(d)}
+}
+function historyHTML(d){
+  var e=(d.edits||[]);if(!e.length)return '';
+  return '<div class="card noprint" style="margin-top:16px;max-width:880px;margin-left:auto;margin-right:auto"><div class="ch"><h2>Change history</h2></div><div class="tw"><table class="tbl"><thead><tr><th>When</th><th>Who</th><th>Reason</th><th>What changed</th></tr></thead><tbody>'+
+    e.slice().reverse().map(function(x){var t=new Date(x.at);return '<tr><td style="white-space:nowrap">'+fdate(x.at.slice(0,10))+' '+('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+'</td><td>'+esc(x.by)+'</td><td>'+esc(x.reason)+'</td><td>'+esc(x.change)+'</td></tr>'}).join('')+'</tbody></table></div></div>';
 }
 
 /* ---------- customers ---------- */
@@ -1067,7 +1111,7 @@ function vSettings(){
     '<section style="display:grid;gap:12px"><h2>Tax and money</h2><div class="grid3">'+inp('taxName','Tax name (VAT)')+inp('taxRate','Tax rate %','number','step="any" min="0"')+inp('taxNo','Your tax / VAT number')+'</div><div class="grid3">'+inp('currency','Currency symbol')+'<div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" name="pricesInclTax" '+(s.pricesInclTax?'checked':'')+'> Prices already include tax</label></div></div></section>'+
     '<section style="display:grid;gap:12px"><h2>Numbering and terms</h2><div class="grid3">'+inp('invPrefix','Invoice prefix')+inp('invNext','Next invoice number','number','min="1"')+inp('termsDays','Payment terms (days)','number','min="0"')+inp('quotePrefix','Quote prefix')+inp('quoteNext','Next quote number','number','min="1"')+inp('quoteDays','Quote valid for (days)','number','min="0"')+inp('invPad','Invoice number digits','number','min="0" max="10"')+inp('quotePad','Quote number digits','number','min="0" max="10"')+inp('orderPrefix','Order prefix')+inp('orderNext','Next order number','number','min="1"')+inp('orderPad','Order number digits','number','min="0" max="10"')+'</div></section>'+
     '<section style="display:grid;gap:12px"><h2>Banking details and default notes</h2><div class="field"><label for="s-bank">Banking details (printed on invoices)</label><textarea id="s-bank" name="bank" rows="4" placeholder="Bank, account name, account number, branch code">'+esc(s.bank)+'</textarea></div><div class="grid2"><div class="field"><label for="s-invNotes">Default note on invoices</label><textarea id="s-invNotes" name="invNotes" rows="3">'+esc(s.invNotes)+'</textarea></div><div class="field"><label for="s-quoteNotes">Default note on quotes</label><textarea id="s-quoteNotes" name="quoteNotes" rows="3">'+esc(s.quoteNotes)+'</textarea></div></div></section></form>'+
-    syncCardHTML()+'<div class="card pad" style="margin-top:16px"><h2 style="margin-bottom:6px">Backup and data</h2><p class="note" style="margin:0 0 12px">Everything is stored inside this web browser on this computer. It is not sent anywhere. If you move the file, use another browser, or clear browser data, your invoices will not be there. Download a backup regularly and keep it somewhere safe. Use <b>Restore</b> to load a backup on any computer.</p><div class="btns"><button class="btn primary" data-act="backup">Download backup</button><button class="btn" data-act="restore">Restore from backup</button><button class="btn" data-act="import">Import history (CSV files)</button><button class="btn" data-act="sample">Load sample data</button><button class="btn danger" data-act="erase">Erase everything</button></div><p class="note" style="margin:10px 0 0">Last backup: '+(s.lastBackup?fdate(s.lastBackup):'never')+'</p></div>');
+    pinCardHTML()+syncCardHTML()+'<div class="card pad" style="margin-top:16px"><h2 style="margin-bottom:6px">Backup and data</h2><p class="note" style="margin:0 0 12px">Everything is stored inside this web browser on this computer. It is not sent anywhere. If you move the file, use another browser, or clear browser data, your invoices will not be there. Download a backup regularly and keep it somewhere safe. Use <b>Restore</b> to load a backup on any computer.</p><div class="btns"><button class="btn primary" data-act="backup">Download backup</button><button class="btn" data-act="restore">Restore from backup</button><button class="btn" data-act="import">Import history (CSV files)</button><button class="btn" data-act="sample">Load sample data</button><button class="btn danger" data-act="erase">Erase everything</button></div><p class="note" style="margin:10px 0 0">Last backup: '+(s.lastBackup?fdate(s.lastBackup):'never')+'</p></div>');
   $('#s-save').addEventListener('click',function(){
     var f=new FormData($('#sform')),o={};f.forEach(function(v,k){o[k]=v});
     ['taxRate','invNext','quoteNext','orderNext','termsDays','quoteDays','invPad','quotePad','orderPad'].forEach(function(k){o[k]=+o[k]||0});
@@ -1232,6 +1276,7 @@ function runImport(sets){
 /* ---------- document actions ---------- */
 function delDoc(id){
   var d=docById(id);if(!d)return;
+  if(d.type==='invoice'){toast('Invoices can’t be deleted. To cancel one, open it and use Cancel invoice.','bad');return}
   var w=T(d.type).word,extra=d.payments&&d.payments.length?' This invoice has payments recorded against it, and they will be deleted too.':'';
   ask('Delete '+w,'Delete '+w+' <b>'+esc(d.number)+'</b> for '+esc(custName(d.customerId))+'?'+extra+' This cannot be undone.').then(function(ok){
     if(!ok)return;S.docs=S.docs.filter(function(x){return x.id!==id});save();toast('Deleted');
@@ -1269,9 +1314,13 @@ document.addEventListener('click',function(e){
       case 'edit-item':itemModal(id);break;
       case 'del-item':ask('Delete item','Delete this item? Invoices that already use it are not changed.').then(function(ok){if(ok){S.items=S.items.filter(function(i){return i.id!==id});save();route()}});break;
       case 'pay':e.stopPropagation();payModal(id);break;
-      case 'del-payment':e.stopPropagation();ask('Delete payment','Delete this payment? The invoice balance will go back up.').then(function(ok){if(ok){var d=docById(id);d.payments=d.payments.filter(function(p){return p.id!==t.dataset.p});save();route()}});break;
+      case 'del-payment':e.stopPropagation();(function(pid){var d=docById(id),p=d.payments.find(function(x){return x.id===pid});if(!p)return;auditModal('Delete payment','Delete the payment of <b>'+fmt(p.amount)+'</b> ('+fdate(p.date)+') on '+esc(d.number)+'? The invoice balance will go back up.','Delete payment',function(by,reason){d.payments=d.payments.filter(function(x){return x.id!==pid});addEdit(d,by,reason,'Deleted payment of '+fmt(p.amount)+' ('+fdate(p.date)+', '+p.method+')');save();route()})})(t.dataset.p);break;
       case 'refund':e.stopPropagation();refundModal(id);break;
       case 'apply-pay':e.stopPropagation();applyPayModal(id||'');break;
+      case 'pin-set':var p1=$('#pin-new').value,p2=$('#pin-new2').value;if(p1.length<4){toast('The PIN must be at least 4 characters.','bad');break}if(p1!==p2){toast('The two PINs are not the same.','bad');break}var rc=setPin(p1);pinOK=true;pinAt=Date.now();vSettings();showRecovery(rc);break;
+      case 'pin-lock':pinOK=false;route();break;
+      case 'pin-change':pinAsk('Change PIN','<div class="field"><label>Current PIN</label><input name="cur" type="password" required autocomplete="off"></div><div class="field"><label>New PIN (at least 4 characters)</label><input name="n1" type="password" required minlength="4" autocomplete="new-password"></div><div class="field"><label>Type the new PIN again</label><input name="n2" type="password" required autocomplete="new-password"></div>','Change PIN',function(f){if(!pinCheck(f.cur)){toast('Current PIN is not right.','bad');return false}if(f.n1!==f.n2){toast('The two new PINs are not the same.','bad');return false}var code=setPin(f.n1);pinAt=Date.now();setTimeout(function(){vSettings();showRecovery(code)},50)});break;
+      case 'pin-off':pinAsk('Turn PIN off','<p style="margin-top:0">Anyone using this program will be able to change settings. Type your PIN to turn protection off.</p><div class="field"><label>Current PIN</label><input name="cur" type="password" required autocomplete="off"></div>','Turn PIN off',function(f){if(!pinCheck(f.cur)){toast('That PIN is not right.','bad');return false}delete S.settings.pin;save();setTimeout(vSettings,50)});break;
       case 'adj-stock':stockModal(id);break;
       case 'wa':waDoc(docById(id));break;
       case 'sync-connect':syConnect($('#sy-url').value,$('#sy-pass').value);break;
@@ -1280,8 +1329,9 @@ document.addEventListener('click',function(e){
       case 'stmt-wa':waStatement(id);break;
       case 'stmt-mail':var sc=cust(id),sb=custBalance(id),ss=S.settings;emailModal('Statement from '+(ss.company||'us'),'Hi '+(sc.contact||sc.name)+',\n\nPlease find attached your statement. The amount due is '+fmt(sb)+'.\n\n'+(ss.bank?'Banking details:\n'+ss.bank+'\n\n':'')+'Kind regards,\n'+(ss.company||''),sc.email,'Statement - '+sc.name,'statement');break;
       case 'pay-tab':PT=t.dataset.tab;route();break;
-      case 'del-refund':e.stopPropagation();ask('Delete refund','Delete this refund record? The invoice balance will change back.').then(function(ok){if(ok){var d=docById(id);d.refunds=d.refunds.filter(function(r){return r.id!==t.dataset.p});save();route()}});break;
-      case 'del-credit':e.stopPropagation();ask('Delete credit','Delete this return / credit? The invoice balance will go back up.').then(function(ok){if(ok){var d=docById(id);d.credits=d.credits.filter(function(r){return r.id!==t.dataset.p});save();route()}});break;
+      case 'del-refund':e.stopPropagation();(function(pid){var d=docById(id),r=d.refunds.find(function(x){return x.id===pid});if(!r)return;auditModal('Delete refund','Delete the refund of <b>'+fmt(r.amount)+'</b> ('+fdate(r.date)+') on '+esc(d.number)+'? The invoice balance will change back.','Delete refund',function(by,reason){d.refunds=d.refunds.filter(function(x){return x.id!==pid});addEdit(d,by,reason,'Deleted refund of '+fmt(r.amount)+' ('+fdate(r.date)+')');save();route()})})(t.dataset.p);break;
+      case 'del-credit':e.stopPropagation();(function(pid){var d=docById(id),c=d.credits.find(function(x){return x.id===pid});if(!c)return;auditModal('Delete return / credit','Delete the credit of <b>'+fmt(c.amount)+'</b> ('+fdate(c.date)+') on '+esc(d.number)+'? The invoice balance will go back up.','Delete credit',function(by,reason){d.credits=d.credits.filter(function(x){return x.id!==pid});addEdit(d,by,reason,'Deleted credit of '+fmt(c.amount)+' ('+fdate(c.date)+')');save();route()})})(t.dataset.p);break;
+      case 'cancel-inv':(function(){var d=docById(id),c=calc(d),left=round2(c.total-c.credit);if(left<=0.004)return;auditModal('Cancel invoice '+esc(d.number),'Invoices are never deleted. Cancelling records a credit note for the whole invoice so your books stay correct.'+(c.paid-c.refunded>0.004?' This invoice has payments on it, so you will need to refund the customer afterwards using Refund / return.':''),'Cancel invoice',function(by,reason){d.credits=d.credits||[];d.credits.push({id:uid(),date:todayISO(),amount:left,reason:'Invoice cancelled: '+reason,restock:[]});addEdit(d,by,reason,'Invoice cancelled (credit note of '+fmt(left)+')');save();toast('Invoice '+d.number+' cancelled');route()})})();break;
       case 'del-doc':e.stopPropagation();delDoc(id);break;
       case 'dup-doc':dupDoc(id);break;
       case 'convert':convertQuote(id);break;
@@ -1290,8 +1340,8 @@ document.addEventListener('click',function(e){
       case 'print':var pd=docById(id);doPrint(docTitle(pd));break;
       case 'add-line':draft.lines.push(blankLine());$('#lines').insertAdjacentHTML('beforeend',lineRow(draft.lines[draft.lines.length-1],draft.lines.length-1));var last=$$('#lines [data-lf=desc]').pop();if(last)last.focus();break;
       case 'rm-line':var i=+t.closest('tr').dataset.i;if(draft.lines.length===1)draft.lines[0]=blankLine();else draft.lines.splice(i,1);renderLines();recalcUI();break;
-      case 'save-doc':var d1=commitDraft();if(d1)location.hash='#'+T(d1.type).plural;break;
-      case 'save-preview':var d2=commitDraft();if(d2)location.hash='#view/'+d2.id;break;
+      case 'save-doc':saveDraft(function(d1){location.hash='#'+T(d1.type).plural});break;
+      case 'save-preview':saveDraft(function(d2){location.hash='#view/'+d2.id});break;
       case 'cancel-ed':draft=null;break;
       case 'backup':backup();break;
       case 'restore':$('#fileRestore').click();break;
@@ -1309,6 +1359,68 @@ document.addEventListener('click',function(e){
 $('#fileRestore').addEventListener('change',function(e){restoreFile(e.target.files[0]);e.target.value=''});
 $('#fileLogo').addEventListener('change',function(e){pickLogo(e.target.files[0]);e.target.value=''});
 $('#fileImport').addEventListener('change',function(e){importFiles(e.target.files);e.target.value=''});
+
+/* ---------- settings PIN ---------- */
+function sha256(ascii){
+  function rr(v,a){return (v>>>a)|(v<<(32-a))}
+  var m=Math.pow,mw=m(2,32),i,j,res='',words=[],s=unescape(encodeURIComponent(ascii)),bl=s.length*8,hash=[],k=[],pc=0,ic={};
+  for(var c=2;pc<64;c++){if(!ic[c]){for(i=0;i<313;i+=c)ic[i]=c;hash[pc]=(m(c,.5)*mw)|0;k[pc++]=(m(c,1/3)*mw)|0}}
+  s+='\x80';while(s.length%64-56)s+='\x00';
+  for(i=0;i<s.length;i++){j=s.charCodeAt(i);words[i>>2]|=j<<((3-i)%4)*8}
+  words[words.length]=((bl/mw)|0);words[words.length]=bl;
+  for(j=0;j<words.length;){
+    var w=words.slice(j,j+=16),old=hash;hash=hash.slice(0,8);
+    for(i=0;i<64;i++){
+      var w15=w[i-15],w2=w[i-2],a=hash[0],e=hash[4];
+      var t1=hash[7]+(rr(e,6)^rr(e,11)^rr(e,25))+((e&hash[5])^((~e)&hash[6]))+k[i]+(w[i]=(i<16)?w[i]:(w[i-16]+(rr(w15,7)^rr(w15,18)^(w15>>>3))+w[i-7]+(rr(w2,17)^rr(w2,19)^(w2>>>10)))|0);
+      var t2=(rr(a,2)^rr(a,13)^rr(a,22))+((a&hash[1])^(a&hash[2])^(hash[1]&hash[2]));
+      hash=[(t1+t2)|0].concat(hash);hash[4]=(hash[4]+t1)|0;
+    }
+    for(i=0;i<8;i++)hash[i]=(hash[i]+old[i])|0;
+  }
+  for(i=0;i<8;i++)for(j=3;j+1;j--){var b=(hash[i]>>(j*8))&255;res+=((b<16)?0:'')+b.toString(16)}
+  return res;
+}
+var pinOK=false,pinAt=0,pinFails=0,pinLockUntil=0;
+function pinSet(){var p=S.settings.pin;return !!(p&&p.hash)}
+function pinCheck(pin){var p=S.settings.pin;return !!p&&sha256(p.salt+':'+pin)===p.hash}
+function normCode(c){return String(c||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+function recCheck(code){var p=S.settings.pin;return !!p&&sha256(p.salt+':R:'+normCode(code))===p.rec}
+function rnd(n){try{var a=new Uint32Array(1);crypto.getRandomValues(a);return a[0]%n}catch(e){return Math.floor(Math.random()*n)}}
+function genCode(){var al='ABCDEFGHJKLMNPQRSTUVWXYZ23456789',o='';for(var i=0;i<16;i++){o+=al.charAt(rnd(al.length));if(i%4===3&&i<15)o+='-'}return o}
+function setPin(pin){var salt=uid(),code=genCode();S.settings.pin={salt:salt,hash:sha256(salt+':'+pin),rec:sha256(salt+':R:'+normCode(code))};save();return code}
+function showRecovery(code){
+  modal('Write down your recovery code','<p style="margin-top:0">If you ever forget the PIN, this code is the only way to set a new one. Write it down and keep it somewhere safe, away from the computer. It will not be shown again.</p><p style="font-size:26px;font-weight:700;letter-spacing:.08em;text-align:center;margin:16px 0;font-variant-numeric:tabular-nums">'+code+'</p>',{ok:'I have written it down',cancel:false});
+}
+function vLock(){
+  setMain('<div class="card pad" style="max-width:420px;margin:40px auto"><h1 style="margin:0 0 6px;font-size:20px">Settings are locked</h1><p class="sub" style="margin:0 0 14px">Type your settings PIN to continue.</p><div class="field"><label for="pin-in">PIN</label><input id="pin-in" type="password" autocomplete="off"></div><div class="btns" style="margin-top:14px"><button class="btn primary" id="pin-go">Unlock</button><button class="btn" id="pin-forgot">Forgot PIN</button></div></div>');
+  var go=function(){
+    if(Date.now()<pinLockUntil){toast('Too many tries. Please wait a little and try again.','bad');return}
+    if(pinCheck($('#pin-in').value)){pinOK=true;pinAt=Date.now();pinFails=0;vSettings()}
+    else{pinFails++;$('#pin-in').value='';if(pinFails>=5){pinLockUntil=Date.now()+30000;pinFails=0;toast('Too many wrong tries. Wait 30 seconds.','bad')}else toast('That PIN is not right.','bad')}
+  };
+  $('#pin-go').addEventListener('click',go);
+  $('#pin-in').addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();go()}});
+  $('#pin-in').focus();
+  $('#pin-forgot').addEventListener('click',function(){
+    modal('Reset PIN','<p style="margin-top:0">Type the recovery code you wrote down, then choose a new PIN.</p><div class="field"><label>Recovery code</label><input name="code" required autocomplete="off" placeholder="XXXX-XXXX-XXXX-XXXX"></div><div class="field"><label>New PIN (at least 4 characters)</label><input name="pin" type="password" required minlength="4" autocomplete="new-password"></div>',{ok:'Reset PIN',onOk:function(d){
+      var f=formData(d);if(!recCheck(f.code)){toast('That recovery code is not right.','bad');return false}
+      if(String(f.pin).length<4)return false;
+      var code=setPin(f.pin);pinOK=true;pinAt=Date.now();setTimeout(function(){showRecovery(code);vSettings()},50);
+    }});
+  });
+}
+function pinCardHTML(){
+  var s=S.settings;
+  if(!pinSet())return '<div class="card pad" style="margin-top:16px'+(s.company?';border-color:var(--accent)':'')+'"><h2 style="margin-bottom:6px">Protect these settings with a PIN</h2>'+(s.company?'<p class="note" style="margin:0 0 8px;color:var(--accent)"><b>Your company details are filled in.</b> Set a PIN now, so nobody else can change settings, restore a backup or erase your data.</p>':'<p class="note" style="margin:0 0 8px">Once your settings are filled in, set a PIN so nobody else can change them, restore a backup or erase your data.</p>')+'<div class="grid2"><div class="field"><label for="pin-new">New PIN (at least 4 characters)</label><input id="pin-new" type="password" autocomplete="new-password"></div><div class="field"><label for="pin-new2">Type it again</label><input id="pin-new2" type="password" autocomplete="new-password"></div></div><div class="btns" style="margin-top:12px"><button class="btn primary" data-act="pin-set">Set PIN</button></div></div>';
+  return '<div class="card pad" style="margin-top:16px"><h2 style="margin-bottom:6px">Settings PIN</h2><p class="note" style="margin:0 0 10px">A PIN is protecting this page. It locks again when you leave it, or after 10 minutes of no use.</p><div class="btns"><button class="btn" data-act="pin-lock">Lock now</button><button class="btn" data-act="pin-change">Change PIN</button><button class="btn danger" data-act="pin-off">Turn PIN off</button></div></div>';
+}
+function pinAsk(title,fields,okLabel,cb){
+  modal(title,fields,{ok:okLabel,onOk:function(d){return cb(formData(d))}});
+}
+setInterval(function(){if(pinOK&&location.hash==='#settings'&&Date.now()-pinAt>600000)route()},30000);
+document.addEventListener('click',function(){if(pinOK)pinAt=Date.now()},true);
+document.addEventListener('keydown',function(){if(pinOK)pinAt=Date.now()},true);
 
 /* ---------- online sync ---------- */
 var SYNC_KEY='invoiceflow.sync';
