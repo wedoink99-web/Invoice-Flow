@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Windows EXE
 
 on:
   push:
@@ -6,36 +6,29 @@ on:
   workflow_dispatch:
 
 jobs:
-  android:
-    runs-on: ubuntu-latest
+  windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-      - name: Create the Android project
-        working-directory: mobile
+      - name: Copy the app into the desktop folder and install
+        working-directory: desktop
+        shell: pwsh
         run: |
-          rm -rf www && cp -r ../www www
+          if (Test-Path www) { Remove-Item -Recurse -Force www }
+          Copy-Item -Recurse ../www www
           npm install
-          npx cap add android
-          npx cap sync android
-          PKG=android/app/src/main/java/za/co/signgirls/invoiceflow
-          mkdir -p $PKG
-          cp native/MainActivity.java native/NativePrintPlugin.java $PKG/
-          cp -r android-res/* android/app/src/main/res/
-      - name: Build the APK
-        working-directory: mobile/android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
-      - name: Rename the APK
-        run: cp mobile/android/app/build/outputs/apk/debug/app-debug.apk InvoiceFlow.apk
+      - name: Build the EXE files
+        working-directory: desktop
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --win portable nsis --publish never
       - uses: actions/upload-artifact@v4
         with:
-          name: InvoiceFlow-Android
-          path: InvoiceFlow.apk
+          name: InvoiceFlow-Windows
+          path: |
+            desktop/dist/InvoiceFlow-Portable.exe
+            desktop/dist/InvoiceFlow-Setup.exe
