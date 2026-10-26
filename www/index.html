@@ -280,7 +280,7 @@ function fqty(q){return String(+(+q).toFixed(3))}
 function defaults(){return{
   v:1,
   settings:{company:'',address:'',phone:'',email:'',website:'',taxNo:'',regNo:'',logo:'',currency:'R',taxName:'VAT',taxRate:15,pricesInclTax:false,
-    termsDays:30,quoteDays:30,invPrefix:'INV-',invNext:1,invPad:4,quotePrefix:'QUO-',quoteNext:1,quotePad:4,orderPrefix:'ORD-',orderNext:1,orderPad:4,autoStmt:{on:false,day:1,min:1,last:''},bank:'',invNotes:'Thank you for your business.',quoteNotes:'',lastBackup:''},
+    termsDays:30,quoteDays:30,invPrefix:'INV-',invNext:1,invPad:4,quotePrefix:'QUO-',quoteNext:1,quotePad:4,orderPrefix:'ORD-',orderNext:1,orderPad:4,autoStmt:{on:false,day:1,min:1,last:''},bank:'',invNotes:'Thank you for your business.',quoteNotes:'',lastBackup:'',autoPdf:false},
   customers:[],items:[],docs:[]
 }}
 var S=load();
@@ -533,6 +533,296 @@ function paperHTML(d){
     '</table></div></div>';
 }
 
+/* ---------- PDF files (made inside the program, no print window) ---------- */
+var HW=[278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584];
+var HB=[278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,611,611,389,556,333,611,556,778,556,556,500,389,280,389,584];
+function pdfEnc(s){
+  s=String(s==null?'':s).replace(/…/g,'...');var out=[];
+  for(var i=0;i<s.length;i++){
+    var c=s.charCodeAt(i);
+    if(c===8217||c===8216)c=39;else if(c===8220||c===8221)c=34;else if(c===8211||c===8212||c===8722)c=45;else if(c===8226)c=149;else if(c===8364)c=128;
+    else if(c===160||c===8201||c===8202||c===8239||c===9||c===13)c=32;
+    else if(c<32)c=32;else if(c>255)c=63;
+    out.push(c);
+  }
+  return out;
+}
+function pdfW(codes,size,bold){
+  var t=bold?HB:HW,w=0;
+  for(var i=0;i<codes.length;i++){var c=codes[i];w+=(c>=32&&c<=126)?t[c-32]:(c===149?350:556)}
+  return w*size/1000;
+}
+function pdfWrap(text,maxW,size,bold){
+  var out=[];
+  function fits(t){return pdfW(pdfEnc(t),size,bold)<=maxW}
+  String(text==null?'':text).split('\n').forEach(function(par){
+    var line='';
+    par.split(' ').forEach(function(w){
+      var test=line?line+' '+w:w;
+      if(fits(test)){line=test;return}
+      if(line){out.push(line);line=''}
+      while(!fits(w)){var k=1;while(k<w.length&&fits(w.slice(0,k+1)))k++;out.push(w.slice(0,k));w=w.slice(k)}
+      line=w;
+    });
+    out.push(line);
+  });
+  return out;
+}
+function PdfDoc(title){
+  var pages=[],cur=null,imgs=[],self={W:595.28,H:841.89};
+  function f(n){return String(Math.round(n*100)/100)}
+  function rgb(h){h=String(h||'#000000').replace('#','');return [parseInt(h.substr(0,2),16)/255,parseInt(h.substr(2,2),16)/255,parseInt(h.substr(4,2),16)/255].map(f).join(' ')}
+  function hex(codes){return '<'+codes.map(function(c){return ('0'+c.toString(16)).slice(-2)}).join('')+'>'}
+  self.add=function(){cur=[];pages.push(cur);return pages.length};
+  self.count=function(){return pages.length};
+  self.page=function(i){cur=pages[i-1]};
+  self.text=function(x,y,s,o){
+    o=o||{};var size=o.size||10,codes=pdfEnc(s),wd=pdfW(codes,size,o.bold);
+    if(o.align==='right')x-=wd;else if(o.align==='center')x-=wd/2;
+    cur.push('BT '+rgb(o.color)+' rg /'+(o.bold?'F2':'F1')+' '+f(size)+' Tf '+f(x)+' '+f(self.H-y)+' Td '+hex(codes)+' Tj ET');
+    return wd;
+  };
+  self.rect=function(x,y,w,h,fill){cur.push(rgb(fill)+' rg '+f(x)+' '+f(self.H-y-h)+' '+f(w)+' '+f(h)+' re f')};
+  self.line=function(x1,y1,x2,y2,color,lw){cur.push(rgb(color)+' RG '+f(lw||0.6)+' w '+f(x1)+' '+f(self.H-y1)+' m '+f(x2)+' '+f(self.H-y2)+' l S')};
+  self.stamp=function(cx,cy,s,color,deg){
+    var a=deg*Math.PI/180,co=Math.cos(a),si=Math.sin(a),size=30,w=pdfW(pdfEnc(s),size,true);
+    cur.push('q /GS1 gs '+f(co)+' '+f(si)+' '+f(-si)+' '+f(co)+' '+f(cx)+' '+f(self.H-cy)+' cm '+rgb(color)+' RG '+rgb(color)+' rg 3 w '+f(-w/2-16)+' -24 '+f(w+32)+' 50 re S BT /F2 '+size+' Tf '+f(-w/2)+' -10 Td '+hex(pdfEnc(s))+' Tj ET Q');
+  };
+  self.image=function(bytes,wpx,hpx){imgs.push({b:bytes,w:wpx,h:hpx});return imgs.length};
+  self.draw=function(n,x,y,w,h){cur.push('q '+f(w)+' 0 0 '+f(h)+' '+f(x)+' '+f(self.H-y-h)+' cm /Im'+n+' Do Q')};
+  self.finish=function(){
+    var parts=[],len=0,offs=[];
+    function put(x){var b;if(typeof x==='string'){b=new Uint8Array(x.length);for(var i=0;i<x.length;i++)b[i]=x.charCodeAt(i)&255}else b=x;parts.push(b);len+=b.length}
+    function obj(n,body){offs[n]=len;put(n+' 0 obj\n');put(body);put('\nendobj\n')}
+    var np=pages.length,imgBase=6,pageBase=imgBase+imgs.length;
+    put('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+    var kids=[];for(var i=0;i<np;i++)kids.push((pageBase+i*2+1)+' 0 R');
+    obj(1,'<< /Type /Catalog /Pages 2 0 R >>');
+    obj(2,'<< /Type /Pages /Kids ['+kids.join(' ')+'] /Count '+np+' >>');
+    obj(3,'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+    obj(4,'<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+    obj(5,'<< /Type /ExtGState /ca 0.7 /CA 0.7 >>');
+    imgs.forEach(function(im,k){
+      offs[imgBase+k]=len;
+      put((imgBase+k)+' 0 obj\n<< /Type /XObject /Subtype /Image /Width '+im.w+' /Height '+im.h+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+im.b.length+' >>\nstream\n');
+      put(im.b);put('\nendstream\nendobj\n');
+    });
+    var xo=imgs.map(function(im,k){return '/Im'+(k+1)+' '+(imgBase+k)+' 0 R'}).join(' ');
+    pages.forEach(function(ops,i){
+      var cn=pageBase+i*2,pn=cn+1,stream=ops.join('\n');
+      obj(cn,'<< /Length '+stream.length+' >>\nstream\n'+stream+'\nendstream');
+      obj(pn,'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+f(self.W)+' '+f(self.H)+'] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> /ExtGState << /GS1 5 0 R >>'+(xo?' /XObject << '+xo+' >>':'')+' >> /Contents '+cn+' 0 R >>');
+    });
+    var infoN=pageBase+np*2;
+    obj(infoN,'<< /Title '+hex(pdfEnc(title||''))+' /Producer (InvoiceFlow) >>');
+    var xr=len,total=infoN+1;
+    put('xref\n0 '+total+'\n0000000000 65535 f \n');
+    for(var n=1;n<total;n++)put(('0000000000'+offs[n]).slice(-10)+' 00000 n \n');
+    put('trailer\n<< /Size '+total+' /Root 1 0 R /Info '+infoN+' 0 R >>\nstartxref\n'+xr+'\n%%EOF');
+    var out=new Uint8Array(len),p=0;parts.forEach(function(b){out.set(b,p);p+=b.length});
+    return out;
+  };
+  return self;
+}
+var PC={blue:'#1d4f9f',navy:'#1d3557',gray:'#667180',ink:'#1b2127',rule:'#e3e6e0',green:'#1d7f4e',red:'#b3261e'};
+var PM={L:40,R:555,top:44,bot:792};
+function pdfLogo(){
+  return new Promise(function(res){
+    var src=S.settings.logo;if(!src)return res(null);
+    var img=new Image();
+    img.onload=function(){try{
+      var cv=document.createElement('canvas');cv.width=img.width;cv.height=img.height;var cx=cv.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,cv.width,cv.height);cx.drawImage(img,0,0);
+      var b=atob(cv.toDataURL('image/jpeg',0.92).split(',')[1]),a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);
+      res({bytes:a,w:cv.width,h:cv.height});
+    }catch(e){res(null)}};
+    img.onerror=function(){res(null)};img.src=src;
+  });
+}
+function pdfHeader(P,logo,title,meta){
+  var s=S.settings,y=PM.top,ly=y,li=null;
+  if(logo){li=P.image(logo.bytes,logo.w,logo.h);var sc=Math.min(190/logo.w,62/logo.h),w=logo.w*sc,h=logo.h*sc;P.draw(li,PM.L,ly,w,h);ly+=h+10}
+  P.text(PM.L,ly+11,s.company||'Your Company Name',{size:13,bold:true,color:PC.ink});ly+=17;
+  var info=[];
+  String(s.address||'').split('\n').forEach(function(x){if(x.trim())info.push(x.trim())});
+  if(s.phone)info.push('Tel: '+s.phone);if(s.email)info.push(s.email);if(s.website)info.push(s.website);
+  if(s.taxNo)info.push(s.taxName+' no: '+s.taxNo);if(s.regNo)info.push('Reg no: '+s.regNo);
+  info.forEach(function(x){P.text(PM.L,ly+9,x,{size:9,color:'#444444'});ly+=12});
+  var ry=y;P.text(PM.R,ry+20,title,{size:22,bold:true,color:PC.blue,align:'right'});ry+=36;
+  meta.forEach(function(m){P.text(375,ry+9,m[0],{size:9.5,color:PC.gray});P.text(PM.R,ry+9,m[1],{size:9.5,bold:true,align:'right'});ry+=14});
+  return Math.max(ly,ry)+14;
+}
+function pdfParty(P,y,label,lines){
+  P.text(PM.L,y+8,label.toUpperCase(),{size:8,bold:true,color:PC.gray});y+=14;
+  lines.forEach(function(l,i){pdfWrap(l[0],270,l[1]?11:9.5,l[1]).forEach(function(t){P.text(PM.L,y+9,t,{size:l[1]?11:9.5,bold:l[1]});y+=l[1]?14:12.5})});
+  return y+10;
+}
+/* generic table: cols [{h,w,al}], rows [[..]] or {span:[text,last]} ; returns new y */
+function pdfTable(P,y,cols,rows,opt){
+  opt=opt||{};var x0=PM.L,tw=PM.R-PM.L,lh=12.5,pad=8;
+  var fixed=0,flex=null;cols.forEach(function(c){if(c.w)fixed+=c.w;else flex=c});
+  if(flex)flex.w=tw-fixed;
+  var xs=[],x=x0;cols.forEach(function(c){xs.push(x);x+=c.w});
+  function head(){
+    P.rect(x0,y,tw,20,PC.navy);
+    cols.forEach(function(c,i){var s=c.h.toUpperCase();
+      if(c.al==='r')P.text(xs[i]+c.w-pad,y+13.5,s,{size:8,bold:true,color:'#ffffff',align:'right'});else P.text(xs[i]+pad,y+13.5,s,{size:8,bold:true,color:'#ffffff'})});
+    y+=20;
+  }
+  head();
+  rows.forEach(function(r){
+    var cells,h;
+    if(r.span){h=lh+10;cells=null}
+    else{cells=r.map(function(t,i){return pdfWrap(t,cols[i].w-pad*2,9.5,false)});h=Math.max.apply(null,cells.map(function(c){return c.length}))*lh+10}
+    if(y+h>PM.bot){P.add();y=PM.top;head()}
+    if(r.span){P.text(x0+pad,y+14,r.span[0],{size:9.5});P.text(x0+tw-pad,y+14,r.span[1],{size:9.5,bold:true,align:'right'})}
+    else cells.forEach(function(lines,i){
+      var c=cols[i],bold=opt.boldLast&&i===cols.length-1;
+      lines.forEach(function(t,k){var yy=y+14+k*lh;if(c.al==='r')P.text(xs[i]+c.w-pad,yy,t,{size:9.5,bold:bold,align:'right'});else P.text(xs[i]+pad,yy,t,{size:9.5,bold:bold})});
+    });
+    P.line(x0,y+h,x0+tw,y+h,PC.rule,0.6);y+=h;
+  });
+  return y+10;
+}
+function pdfFooters(P){
+  var n=P.count();if(n<2)return;
+  for(var i=1;i<=n;i++){P.page(i);P.text(P.W/2,P.H-24,'Page '+i+' of '+n,{size:8,color:PC.gray,align:'center'})}
+}
+function docPDF(d){
+  return pdfLogo().then(function(logo){
+    var s=S.settings,c=calc(d),cu=cust(d.customerId)||{name:'(deleted customer)'},isInv=d.type==='invoice',st=status(d),tp=T(d.type);
+    var title=isInv?((s.taxNo&&c.tax>0)?'TAX INVOICE':'INVOICE'):d.type==='order'?'SALES ORDER':'QUOTATION';
+    var P=PdfDoc(docTitle(d));P.add();
+    var meta=[[tp.Word+' no',d.number],['Date',fdate(d.date)],[dueLabel(d.type),fdate(d.due)]];if(d.ref)meta.push(['Reference',d.ref]);
+    var y=pdfHeader(P,logo,title,meta),stampY=y+34;
+    var pl=[[cu.name,true]];if(cu.contact)pl.push([cu.contact]);if(cu.address)pl.push([cu.address]);if(cu.taxNo)pl.push([s.taxName+' no: '+cu.taxNo]);
+    y=pdfParty(P,y,isInv?'Bill to':d.type==='order'?'Customer':'Prepared for',pl);
+    var hasDisc=d.lines.some(function(x){return +x.disc}),tax=s.taxRate>0;
+    var cols=[{h:'Description',al:'l'},{h:'Qty',w:46,al:'r'},{h:'Price',w:72,al:'r'}];
+    if(hasDisc)cols.push({h:'Disc',w:46,al:'r'});
+    if(tax)cols.push({h:s.taxName,w:40,al:'r'});
+    cols.push({h:'Amount',w:84,al:'r'});
+    var rows=d.lines.map(function(l){var r=[l.desc,fqty(l.qty),fmt(l.price)];if(hasDisc)r.push(+l.disc?fqty(l.disc)+'%':'');if(tax)r.push(l.tax?'Y':'-');r.push(fmt(lineAmt(l)));return r});
+    y=pdfTable(P,y,cols,rows,{boldLast:true});
+    /* totals (right) */
+    var tot=[['Subtotal'+(s.pricesInclTax?' (excl. '+s.taxName+')':''),fmt(c.net)]];
+    if(c.disc)tot.push(['Discount ('+fqty(d.discount)+'%)','-'+fmt(c.disc)]);
+    if(c.ship)tot.push(['Delivery',fmt(c.ship)]);
+    if(tax)tot.push([s.taxName+' ('+fqty(s.taxRate)+'%)',fmt(c.tax)]);
+    tot.push(['Total',fmt(c.total),'g']);
+    if(isInv&&c.credit)tot.push(['Returns / credits','-'+fmt(c.credit)]);
+    if(isInv&&c.paid)tot.push(['Paid','-'+fmt(c.paid)]);
+    if(isInv&&c.refunded)tot.push(['Refunded',fmt(c.refunded)]);
+    var hasMoney=isInv&&(c.paid||c.credit||c.refunded);
+    if(hasMoney)tot.push([c.balance<-0.004?'Credit on account':'Balance due',fmt(c.balance<-0.004?-c.balance:c.balance),'d']);
+    var rh=0;tot.forEach(function(t){rh+=t[2]==='g'?26:t[2]==='d'?22:16});
+    /* notes, banking, payments, returns (left) */
+    var L=[];
+    function box(h,text){L.push({t:h.toUpperCase(),size:8,bold:true,color:PC.gray,gap:6});pdfWrap(text,285,9.5,false).forEach(function(t){L.push({t:t,size:9.5})})}
+    if(d.notes)box('Notes',d.notes);
+    if(isInv&&s.bank)box('Banking details',s.bank);
+    if((d.payments||[]).length){L.push({t:'PAYMENTS RECEIVED',size:8,bold:true,color:PC.gray,gap:6});d.payments.slice().sort(function(a,b){return a.date.localeCompare(b.date)}).forEach(function(p){L.push({cols:[fdate(p.date),p.method+(p.ref?' - '+p.ref:''),fmt(p.amount)]})})}
+    if((d.credits||[]).length||(d.refunds||[]).length){L.push({t:'RETURNS AND REFUNDS',size:8,bold:true,color:PC.gray,gap:6});
+      (d.credits||[]).forEach(function(x){L.push({cols:[fdate(x.date),'Credit'+(x.reason?' - '+x.reason:''),fmt(x.amount)]})});
+      (d.refunds||[]).forEach(function(x){L.push({cols:[fdate(x.date),'Refund - '+x.method+(x.ref?' - '+x.ref:''),fmt(x.amount)]})})}
+    var lhh=0;L.forEach(function(r){lhh+=(r.gap||0)+(r.cols?13:r.size+3.5)});
+    if(y+Math.min(Math.max(rh,lhh),200)>PM.bot){P.add();y=PM.top}
+    var ty=y;
+    tot.forEach(function(t){
+      if(t[2]==='g'){P.line(375,ty+4,PM.R,ty+4,PC.ink,1.4);P.text(375,ty+20,t[0],{size:13,bold:true});P.text(PM.R,ty+20,t[1],{size:13,bold:true,align:'right'});ty+=26}
+      else if(t[2]==='d'){P.text(375,ty+15,t[0],{size:12,bold:true,color:PC.blue});P.text(PM.R,ty+15,t[1],{size:12,bold:true,color:PC.blue,align:'right'});ty+=22}
+      else{P.text(375,ty+11,t[0],{size:10});P.text(PM.R,ty+11,t[1],{size:10,align:'right'});ty+=16}
+    });
+    var ly=y;
+    L.forEach(function(r){
+      ly+=r.gap||0;
+      if(ly+14>PM.bot){P.add();ly=PM.top}
+      if(r.cols){P.text(PM.L,ly+9,r.cols[0],{size:9});P.text(PM.L+72,ly+9,r.cols[1],{size:9});P.text(PM.L+300,ly+9,r.cols[2],{size:9,align:'right'});ly+=13}
+      else{P.text(PM.L,ly+r.size,r.t,{size:r.size,bold:r.bold,color:r.color});ly+=r.size+3.5}
+    });
+    if(isInv&&st==='Paid'&&c.total-c.credit>0.004){P.page(1);P.stamp(450,stampY,'PAID',PC.green,10)}
+    pdfFooters(P);
+    return P.finish();
+  });
+}
+function stmtData(id,from){
+  var tx=[];
+  invoices().filter(function(d){return d.customerId===id}).forEach(function(d){
+    tx.push({date:d.date,o:0,type:'Invoice',ref:d.number,dr:calc(d).total,cr:0});
+    d.payments.forEach(function(p){tx.push({date:p.date,o:1,type:'Payment',ref:d.number+(p.ref?' ('+p.ref+')':''),dr:0,cr:+p.amount})});
+    (d.credits||[]).forEach(function(c){tx.push({date:c.date,o:2,type:'Credit',ref:d.number+(c.reason?' ('+c.reason+')':''),dr:0,cr:+c.amount})});
+    (d.refunds||[]).forEach(function(r){tx.push({date:r.date,o:3,type:'Refund',ref:d.number,dr:+r.amount,cr:0})});
+  });
+  tx.sort(function(a,b){return a.date.localeCompare(b.date)||a.o-b.o});
+  var open=0;tx.forEach(function(t){if(from&&t.date<from)open+=t.dr-t.cr});
+  var bal=open,rows=tx.filter(function(t){return !from||t.date>=from}).map(function(t){bal+=t.dr-t.cr;return {t:t,bal:bal}});
+  var ag=[0,0,0,0,0],today=todayISO();
+  invoices().filter(function(d){return d.customerId===id}).forEach(function(d){var b=calc(d).balance;if(b<=0.004)return;var o=daysBetween(d.due,today);ag[o<=0?0:o<=30?1:o<=60?2:o<=90?3:4]+=b});
+  return {open:open,rows:rows,bal:bal,ag:ag,today:today};
+}
+function stmtPDF(id,from){
+  return pdfLogo().then(function(logo){
+    var s=S.settings,c=cust(id)||{name:''},D=stmtData(id,from),P=PdfDoc('Statement - '+c.name);P.add();
+    var meta=[['Date',fdate(D.today)]];if(from)meta.push(['From',fdate(from)]);
+    var y=pdfHeader(P,logo,'STATEMENT',meta);
+    var pl=[[c.name,true]];if(c.address)pl.push([c.address]);
+    y=pdfParty(P,y,'Statement for',pl);
+    var cols=[{h:'Date',w:78,al:'l'},{h:'Type',w:58,al:'l'},{h:'Reference',al:'l'},{h:'Charges',w:74,al:'r'},{h:'Paid / credits',w:80,al:'r'},{h:'Balance',w:80,al:'r'}];
+    var rows=[];if(from)rows.push({span:['Balance brought forward',fmt(D.open)]});
+    D.rows.forEach(function(r){rows.push([fdate(r.t.date),r.t.type,r.t.ref,r.t.dr?fmt(r.t.dr):'',r.t.cr?fmt(r.t.cr):'',fmt(r.bal)])});
+    if(!rows.length)rows.push({span:['No activity.','']});
+    y=pdfTable(P,y,cols,rows,{boldLast:true});
+    if(y+90>PM.bot){P.add();y=PM.top}
+    P.text(375,y+15,'Amount due',{size:12,bold:true,color:PC.blue});P.text(PM.R,y+15,fmt(D.bal),{size:12,bold:true,color:PC.blue,align:'right'});
+    var by=y;
+    if(s.bank){P.text(PM.L,by+8,'BANKING DETAILS',{size:8,bold:true,color:PC.gray});by+=14;pdfWrap(s.bank,285,9.5,false).forEach(function(t){P.text(PM.L,by+9,t,{size:9.5});by+=12.5})}
+    y=Math.max(y+30,by+10);
+    if(y+60>PM.bot){P.add();y=PM.top}
+    var ac=[{h:'Current',w:103,al:'r'},{h:'1-30 days',w:103,al:'r'},{h:'31-60 days',w:103,al:'r'},{h:'61-90 days',w:103,al:'r'},{h:'90+ days',w:103,al:'r'}];
+    pdfTable(P,y,ac,[D.ag.map(fmt)]);
+    pdfFooters(P);
+    return P.finish();
+  });
+}
+function pdfName(t){return String(t).replace(/[\\\/:*?"<>|\r\n]+/g,' ').replace(/\s+/g,' ').trim()+'.pdf'}
+function docPdfSpec(d){return {name:pdfName(docTitle(d)),make:function(){return docPDF(d)}}}
+function stmtPdfSpec(id,from){var c=cust(id)||{};return {name:pdfName('Statement - '+c.name),make:function(){return stmtPDF(id,from||'')}}}
+function bytesB64(b){var s='',i,n=0x8000;for(i=0;i<b.length;i+=n)s+=String.fromCharCode.apply(null,b.subarray(i,i+n));return btoa(s)}
+function isNative(){var C=window.Capacitor;return !!(C&&C.isNativePlatform&&C.isNativePlatform()&&C.Plugins&&C.Plugins.Filesystem&&C.Plugins.Share)}
+function canShareFiles(){
+  if(isNative())return true;
+  try{if(window.InvoiceFlowDesktop)return false;return !!(navigator.canShare&&typeof File==='function'&&navigator.canShare({files:[new File(['x'],'a.pdf',{type:'application/pdf'})]}))}catch(e){return false}
+}
+/* save a finished PDF. auto=true means a silent save (no share sheet / no dialogs) */
+function savePdfBytes(name,bytes,auto){
+  var C=window.Capacitor,P=C&&C.Plugins,DK=window.InvoiceFlowDesktop;
+  if(DK&&DK.savePdf)return DK.savePdf(name,bytesB64(bytes),!!auto).then(function(r){toast('PDF saved: '+(r&&r.path||name));return r});
+  if(isNative()){
+    if(auto)return P.Filesystem.writeFile({path:'InvoiceFlow/'+name,data:bytesB64(bytes),directory:'DOCUMENTS',recursive:true}).then(function(){toast('PDF saved in Documents / InvoiceFlow')});
+    return P.Filesystem.writeFile({path:name,data:bytesB64(bytes),directory:'CACHE'}).then(function(r){return P.Share.share({title:name,url:r.uri,dialogTitle:'Save or send '+name})});
+  }
+  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));a.download=name;document.body.appendChild(a);a.click();
+  setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},1000);
+  toast('PDF saved: '+name);return Promise.resolve();
+}
+function pdfFail(e){if(/cancel|abort/i.test(String(e&&(e.name||e.message)||e)))return;toast('Could not make the PDF. '+(e&&e.message||''),'bad')}
+function downloadSpec(spec){toast('Making PDF…');return spec.make().then(function(b){return savePdfBytes(spec.name,b,false)}).catch(pdfFail)}
+function shareSpec(spec,text){
+  return spec.make().then(function(b){
+    if(isNative()){var P=window.Capacitor.Plugins;return P.Filesystem.writeFile({path:spec.name,data:bytesB64(b),directory:'CACHE'}).then(function(r){return P.Share.share({title:spec.name,text:text,url:r.uri,dialogTitle:'Send '+spec.name})})}
+    var file=new File([b],spec.name,{type:'application/pdf'});
+    return navigator.share({files:[file],title:spec.name.replace(/\.pdf$/,''),text:text});
+  }).catch(pdfFail);
+}
+function autoPdfSave(d){
+  if(!S.settings.autoPdf||!d||d.type!=='invoice')return;
+  var sp=docPdfSpec(d);
+  sp.make().then(function(b){return savePdfBytes(sp.name,b,true)}).catch(function(e){toast('The automatic PDF could not be saved. Use Download PDF on the invoice.','bad')});
+}
+function fillPdfFolder(){
+  var DK=window.InvoiceFlowDesktop,box=$('#pdfFolderBox');if(!box||!DK||!DK.getPdfFolder)return;
+  DK.getPdfFolder().then(function(f){box.innerHTML='<div class="row" style="align-items:center;flex-wrap:wrap"><span>PDFs are saved in: <b>'+esc(f)+'</b></span><button type="button" class="btn sm" data-act="pdf-folder">Choose a different folder</button></div>'});
+}
+
 /* ---------- view a document ---------- */
 function vView(id){
   var d=docById(id);if(!d){location.hash='#dashboard';return}
@@ -545,7 +835,7 @@ function vView(id){
     (d.type==='quote'&&open?'<button class="btn" data-act="quote-status" data-id="'+d.id+'" data-s="accepted">Mark accepted</button><button class="btn" data-act="quote-status" data-id="'+d.id+'" data-s="declined">Mark declined</button>':'')+
     (d.type==='order'&&open?'<button class="btn" data-act="quote-status" data-id="'+d.id+'" data-s="cancelled">Cancel order</button>':'')+
     '<button class="btn" data-act="email" data-id="'+d.id+'">Email</button>'+'<button class="btn" data-act="wa" data-id="'+d.id+'">WhatsApp</button>'+
-    '<button class="btn" data-act="print" data-id="'+d.id+'">Print / Save as PDF</button>'+
+    '<button class="btn" data-act="pdf" data-id="'+d.id+'">Download PDF</button><button class="btn" data-act="print" data-id="'+d.id+'">Print</button>'+
     '<button class="btn" data-act="dup-doc" data-id="'+d.id+'">Make a copy</button>'+
     (isInv?(status(d)!=='Cancelled'?'<button class="btn danger" data-act="cancel-inv" data-id="'+d.id+'">Cancel invoice</button>':''):'<button class="btn danger" data-act="del-doc" data-id="'+d.id+'">Delete</button>');
   setMain('<div class="head noprint"><div><h1>'+esc(d.number)+' '+badge(status(d))+'</h1><p class="sub">'+esc(custName(d.customerId))+'</p></div><div class="btns">'+btns+'</div></div>'+paperHTML(d)+(isInv?historyHTML(d):''));
@@ -559,11 +849,22 @@ function doPrint(title){
   if(np){try{np.print({title:title});return}catch(e){}}
   window.print();
 }
-function emailModal(subject,body,to,printTitle,what){
+function pdfStepsUI(spec,canShare){
+  return (canShare?'<div class="row" style="margin-bottom:10px"><button type="button" class="btn primary" id="m-share">Share PDF now (attached automatically)</button></div><p class="note" style="margin-top:0">Or do it in two steps:</p>':'')+
+   '<ol class="steps"><li>Click <b>Save PDF</b>. It is named <b>'+esc(spec?spec.name:'')+'</b>.</li><li>Click <b>Open email</b> below, then attach that PDF.</li></ol><div class="row"><button type="button" class="btn" id="m-pdf">Save PDF</button>';
+}
+function hookPdfButtons(dlg,spec,text,printTitle){
+  var b=dlg.querySelector('#m-pdf');
+  if(b)b.addEventListener('click',function(){if(spec)downloadSpec(spec);else{dlg.close();setTimeout(function(){doPrint(printTitle)},120)}});
+  var sh=dlg.querySelector('#m-share');
+  if(sh)sh.addEventListener('click',function(){shareSpec(spec,text)});
+}
+function emailModal(subject,body,to,printTitle,what,spec){
+  var cs=!!spec&&canShareFiles();
   var dlg=modal('Email this '+what,
-    '<p>Your email program can’t attach the PDF by itself, so it takes two steps:</p><ol class="steps"><li>Click <b>Save as PDF</b>. In the print window choose <b>Save as PDF</b> as the printer, then Save.</li><li>Click <b>Open email</b>, then attach the PDF you just saved.</li></ol><div class="row"><button type="button" class="btn" id="m-pdf">Save as PDF</button><button type="button" class="btn" id="m-copy">Copy email text</button></div>',
+    (spec?pdfStepsUI(spec,cs):'<ol class="steps"><li>Click <b>Save as PDF</b>. In the print window choose <b>Save as PDF</b> as the printer, then Save.</li><li>Click <b>Open email</b> below, then attach the PDF.</li></ol><div class="row"><button type="button" class="btn" id="m-pdf">Save as PDF</button>')+'<button type="button" class="btn" id="m-copy">Copy email text</button></div>',
     {ok:'Open email',onOk:function(){window.location.href='mailto:'+encodeURIComponent(to||'').replace('%40','@')+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body)}});
-  dlg.querySelector('#m-pdf').addEventListener('click',function(){dlg.close();setTimeout(function(){doPrint(printTitle)},120)});
+  hookPdfButtons(dlg,spec,subject+'\n\n'+body,printTitle);
   dlg.querySelector('#m-copy').addEventListener('click',function(){
     var done=function(){toast('Email text copied')};
     if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(subject+'\n\n'+body).then(done,function(){toast('Could not copy','bad')});else toast('Could not copy','bad');
@@ -574,27 +875,29 @@ function emailDoc(d){
   var subj=tp.Word+' '+d.number+' from '+(s.company||'us');
   var tail=isInv?', due on '+fdate(d.due):d.type==='order'?', required by '+fdate(d.due):', valid until '+fdate(d.due);
   var body='Hi '+(cu.contact||cu.name||'')+',\n\nPlease find attached '+tp.word+' '+d.number+' for '+fmt(isInv&&c.balance>0.004?c.balance:c.total)+tail+'.\n\n'+(isInv&&s.bank?'Banking details:\n'+s.bank+'\n\nPlease use '+d.number+' as the payment reference.\n\n':'')+'Kind regards,\n'+(s.company||'');
-  emailModal(subj,body,cu.email,docTitle(d),tp.word);
+  emailModal(subj,body,cu.email,docTitle(d),tp.word,docPdfSpec(d));
 }
 
 /* ---------- WhatsApp ---------- */
 function waNumber(p){var d=String(p||'').replace(/\D/g,'');if(!d)return '';if(d.indexOf('00')===0)d=d.slice(2);else if(d.charAt(0)==='0')d='27'+d.slice(1);else if(d.length===9)d='27'+d;return d}
-function waModal(text,phone,printTitle){
-  var num=waNumber(phone);
-  var dlg=modal('Send by WhatsApp','<p>WhatsApp can’t attach the PDF by itself, so it takes three steps:</p><ol class="steps"><li>Click <b>Save as PDF</b>. In the print window choose <b>Save as PDF</b> as the printer, then Save.</li><li>Click <b>Open WhatsApp</b>. The chat opens with the message ready. Press send.</li><li>In WhatsApp click the paperclip and attach the PDF you saved.</li></ol><div class="field"><label for="wa-t">Message (you can change it)</label><textarea id="wa-t" rows="7">'+esc(text)+'</textarea></div><div class="row"><button type="button" class="btn" id="m-pdf">Save as PDF</button></div>'+(num?'<p class="note">Sending to +'+num+'</p>':'<p class="note">This customer has no phone number saved, so WhatsApp will let you choose who to send it to. Add the number on the customer’s page to skip that.</p>'),
+function waModal(text,phone,printTitle,spec){
+  var num=waNumber(phone),cs=!!spec&&canShareFiles();
+  var dlg=modal('Send by WhatsApp',(spec?pdfStepsUI(spec,cs).replace('Click <b>Open email</b> below, then attach that PDF.','Click <b>Open WhatsApp</b> below and press send, then use the paperclip to attach that PDF.'):'<ol class="steps"><li>Click <b>Save as PDF</b>.</li><li>Click <b>Open WhatsApp</b> and press send, then attach the PDF with the paperclip.</li></ol><div class="row"><button type="button" class="btn" id="m-pdf">Save as PDF</button>')+'</div><div class="field"><label for="wa-t">Message (you can change it)</label><textarea id="wa-t" rows="7">'+esc(text)+'</textarea></div>'+(num?'<p class="note">Sending to +'+num+'</p>':'<p class="note">This customer has no phone number saved, so WhatsApp will let you choose who to send it to. Add the number on the customer’s page to skip that.</p>'),
     {ok:'Open WhatsApp',onOk:function(d){var u='https://wa.me/'+num+'?text='+encodeURIComponent(d.querySelector('#wa-t').value);if(window.Capacitor&&window.Capacitor.isNativePlatform&&window.Capacitor.isNativePlatform())window.location.href=u;else window.open(u,'_blank','noopener')}});
-  dlg.querySelector('#m-pdf').addEventListener('click',function(){dlg.close();setTimeout(function(){doPrint(printTitle)},120)});
+  hookPdfButtons(dlg,spec,text,printTitle);
+  var ta=dlg.querySelector('#wa-t'),sh=dlg.querySelector('#m-share');
+  if(sh){var nb=sh.cloneNode(true);sh.parentNode.replaceChild(nb,sh);nb.addEventListener('click',function(){shareSpec(spec,ta.value)})}
 }
 function waDoc(d){
   var s=S.settings,cu=cust(d.customerId)||{},isInv=d.type==='invoice',c=calc(d),tp=T(d.type);
   var tail=isInv?', due on '+fdate(d.due):d.type==='order'?', required by '+fdate(d.due):', valid until '+fdate(d.due);
   var txt='Hi '+(cu.contact||cu.name||'')+',\n\nHere is '+tp.word+' '+d.number+' from '+(s.company||'us')+' for '+fmt(isInv&&c.balance>0.004?c.balance:c.total)+tail+'.'+(isInv&&s.bank?'\n\nBanking details:\n'+s.bank+'\nPlease use '+d.number+' as the payment reference.':'')+'\n\nThank you,\n'+(s.company||'');
-  waModal(txt,cu.phone,docTitle(d));
+  waModal(txt,cu.phone,docTitle(d),docPdfSpec(d));
 }
 function waStatement(id){
   var s=S.settings,c=cust(id)||{};
   var txt='Hi '+(c.contact||c.name||'')+',\n\nHere is your statement from '+(s.company||'us')+'. The amount due is '+fmt(custBalance(id))+'.'+(s.bank?'\n\nBanking details:\n'+s.bank:'')+'\n\nThank you,\n'+(s.company||'');
-  waModal(txt,c.phone,'Statement - '+c.name);
+  waModal(txt,c.phone,'Statement - '+c.name,stmtPdfSpec(id,''));
 }
 
 /* ---------- invoice / quote editor ---------- */
@@ -737,9 +1040,10 @@ function commitDraft(audit){
   var idx=S.docs.findIndex(function(x){return x.id===d.id});
   if(idx>-1&&audit&&d.type==='invoice'){var old=S.docs[idx];addEdit(d,audit.by,audit.reason,describeChange(old,d),{before:snapshotDoc(old)})}
   if(d.isNew&&d.number===nextNumber(d.type))bumpNumber(d.type);
-  delete d.isNew;
+  var wasNew=!!d.isNew;delete d.isNew;
   if(idx>-1)S.docs[idx]=d;else S.docs.push(d);
   save();draft=null;toast(T(d.type).Word+' '+d.number+' saved');
+  if(wasNew&&d.type==='invoice')setTimeout(function(){autoPdfSave(d)},300);
   return d;
 }
 function saveDraft(after){
@@ -785,12 +1089,29 @@ function custModal(id,after){
 }
 function vCustomer(id){
   var c=cust(id);if(!c){location.hash='#customers';return}
-  var docs=S.docs.filter(function(d){return d.customerId===id}).sort(function(a,b){return b.date.localeCompare(a.date)});
-  var billed=0,paid=0;docs.filter(function(d){return d.type==='invoice'}).forEach(function(d){var x=calc(d);billed+=x.total;paid+=x.paid});
-  setMain('<div class="head"><div><h1>'+esc(c.name)+'</h1><p class="sub">'+[c.contact,c.phone,c.email].filter(Boolean).map(esc).join(' &middot; ')+'</p></div><div class="btns"><a class="btn" href="#customers">&larr; Back</a><button class="btn" data-act="edit-cust" data-id="'+id+'">Edit</button><a class="btn" href="#statement/'+id+'">Statement</a>'+(custBalance(id)>0.004?'<button class="btn" data-act="apply-pay" data-id="'+id+'">Apply payment</button>':'')+'<a class="btn" href="#new/order/'+id+'">New order</a><a class="btn" href="#new/quote/'+id+'">New quote</a><a class="btn primary" href="#new/invoice/'+id+'">New invoice</a></div></div>'+
-    '<div class="stats"><div class="card stat"><small>Invoiced</small><b>'+fmt(billed)+'</b></div><div class="card stat good"><small>Paid</small><b>'+fmt(paid)+'</b></div><div class="card stat bad"><small>Owing</small><b>'+fmt(custBalance(id))+'</b></div></div>'+
+  var t=todayISO();
+  var all=S.docs.filter(function(d){return d.customerId===id});
+  var invs=all.filter(function(d){return d.type==='invoice'});
+  var open=invs.filter(function(d){return calc(d).balance>0.004}).sort(function(a,b){return a.due.localeCompare(b.due)||a.date.localeCompare(b.date)});
+  var done=invs.filter(function(d){return calc(d).balance<=0.004}).sort(function(a,b){return b.date.localeCompare(a.date)});
+  var other=all.filter(function(d){return d.type!=='invoice'}).sort(function(a,b){return b.date.localeCompare(a.date)});
+  var billed=0,paid=0,owing=0,paidTot=0;
+  invs.forEach(function(d){var x=calc(d);billed+=x.total;paid+=x.paid-x.refunded});
+  open.forEach(function(d){owing+=calc(d).balance});
+  done.forEach(function(d){paidTot+=calc(d).total});
+  var row=function(d,isOpen){
+    var x=calc(d),late=isOpen&&d.due&&d.due<t?daysBetween(d.due,t):0;
+    return '<tr data-href="view/'+d.id+'"><td><b>'+esc(d.number)+'</b></td><td>'+fdate(d.date)+'</td><td>'+fdate(d.due)+(late?' <span class="badge bad">'+late+' days late</span>':'')+'</td><td class="num">'+fmt(x.total)+'</td><td class="num">'+fmt(x.paid-x.refunded+x.credit)+'</td><td class="num">'+(isOpen?'<b>'+fmt(x.balance)+'</b>':fmt(Math.max(0,x.balance)))+'</td><td>'+badge(status(d))+'</td><td class="acts">'+(isOpen?'<button class="btn sm" data-act="pay" data-id="'+d.id+'">Payment</button>':'')+'</td></tr>';
+  };
+  var head='<thead><tr><th>Number</th><th>Date</th><th>Due</th><th class="num">Total</th><th class="num">Paid / credited</th><th class="num">Owing</th><th>Status</th><th></th></tr></thead>';
+  var sw='<select id="c-switch" aria-label="Switch customer" style="max-width:240px">'+S.customers.slice().sort(function(a,b){return a.name.localeCompare(b.name)}).map(function(x){return '<option value="'+x.id+'"'+(x.id===id?' selected':'')+'>'+esc(x.name)+'</option>'}).join('')+'</select>';
+  setMain('<div class="head"><div><h1>'+esc(c.name)+'</h1><p class="sub">'+[c.contact,c.phone,c.email].filter(Boolean).map(esc).join(' &middot; ')+'</p></div><div class="btns"><a class="btn" href="#customers">&larr; Back</a>'+sw+'<button class="btn" data-act="edit-cust" data-id="'+id+'">Edit</button><a class="btn" href="#statement/'+id+'">Statement</a>'+(owing>0.004?'<button class="btn" data-act="apply-pay" data-id="'+id+'">Apply payment</button>':'')+'<a class="btn" href="#new/order/'+id+'">New order</a><a class="btn" href="#new/quote/'+id+'">New quote</a><a class="btn primary" href="#new/invoice/'+id+'">New invoice</a></div></div>'+
+    '<div class="stats"><div class="card stat"><small>Invoiced</small><b>'+fmt(billed)+'</b></div><div class="card stat good"><small>Paid</small><b>'+fmt(paid)+'</b></div><div class="card stat bad"><small>Owing</small><b>'+fmt(owing)+'</b></div></div>'+
     (c.address||c.taxNo||c.notes?'<div class="card pad" style="margin-bottom:16px">'+(c.address?'<div>'+nl(c.address)+'</div>':'')+(c.taxNo?'<div class="muted">'+esc(S.settings.taxName)+' no: '+esc(c.taxNo)+'</div>':'')+(c.notes?'<div class="note" style="margin-top:8px">Note: '+nl(c.notes)+'</div>':'')+'</div>':'')+
-    '<div class="card"><div class="ch"><h2>Invoices, orders and quotes</h2><button class="btn sm danger" data-act="del-cust" data-id="'+id+'">Delete customer</button></div>'+(docs.length?'<div class="tw"><table class="tbl"><thead><tr><th>Number</th><th>Type</th><th>Date</th><th class="num">Total</th><th class="num">Balance</th><th>Status</th></tr></thead><tbody>'+docs.map(function(d){var x=calc(d);return '<tr data-href="view/'+d.id+'"><td><b>'+esc(d.number)+'</b></td><td>'+T(d.type).Word+'</td><td>'+fdate(d.date)+'</td><td class="num">'+fmt(x.total)+'</td><td class="num">'+(d.type==='invoice'?fmt(x.balance):'')+'</td><td>'+badge(status(d))+'</td></tr>'}).join('')+'</tbody></table></div>':'<div class="empty">Nothing for this customer yet.</div>')+'</div>');
+    '<div class="card" style="margin-bottom:16px"><div class="ch"><h2>Outstanding invoices ('+open.length+')</h2><span class="muted">Owing <b>'+fmt(owing)+'</b></span></div>'+(open.length?'<div class="tw"><table class="tbl">'+head+'<tbody>'+open.map(function(d){return row(d,true)}).join('')+'</tbody></table></div>':'<div class="empty">Nothing outstanding. This customer is all paid up.</div>')+'</div>'+
+    '<div class="card" style="margin-bottom:16px"><div class="ch"><h2>Paid invoices ('+done.length+')</h2><span class="muted">Total <b>'+fmt(paidTot)+'</b></span></div>'+(done.length?'<div class="tw"><table class="tbl">'+head+'<tbody>'+done.map(function(d){return row(d,false)}).join('')+'</tbody></table></div>':'<div class="empty">No paid invoices yet.</div>')+'</div>'+
+    '<div class="card"><div class="ch"><h2>Orders and quotes ('+other.length+')</h2><button class="btn sm danger" data-act="del-cust" data-id="'+id+'">Delete customer</button></div>'+(other.length?'<div class="tw"><table class="tbl"><thead><tr><th>Number</th><th>Type</th><th>Date</th><th class="num">Total</th><th>Status</th></tr></thead><tbody>'+other.map(function(d){return '<tr data-href="view/'+d.id+'"><td><b>'+esc(d.number)+'</b></td><td>'+T(d.type).Word+'</td><td>'+fdate(d.date)+'</td><td class="num">'+fmt(calc(d).total)+'</td><td>'+badge(status(d))+'</td></tr>'}).join('')+'</tbody></table></div>':'<div class="empty">No orders or quotes for this customer.</div>')+'</div>');
+  $('#c-switch').addEventListener('change',function(e){location.hash='#customer/'+e.target.value});
 }
 
 /* ---------- statement ---------- */
@@ -817,13 +1138,14 @@ var stFrom='';
 function vStatement(id){
   var c=cust(id);if(!c){location.hash='#customers';return}
   stFrom='';
-  setMain('<div class="head noprint"><div><h1>Statement: '+esc(c.name)+'</h1></div><div class="btns"><a class="btn" href="#customer/'+id+'">&larr; Back</a><div class="row" style="align-items:center"><label for="sf" style="margin:0">Show from</label><input id="sf" type="date" style="width:auto"></div><button class="btn" id="st-mail">Email</button><button class="btn" id="st-wa">WhatsApp</button><button class="btn primary" id="st-print">Print / Save as PDF</button></div></div><div id="st">'+statementHTML(id,'')+'</div>');
+  setMain('<div class="head noprint"><div><h1>Statement: '+esc(c.name)+'</h1></div><div class="btns"><a class="btn" href="#customer/'+id+'">&larr; Back</a><div class="row" style="align-items:center"><label for="sf" style="margin:0">Show from</label><input id="sf" type="date" style="width:auto"></div><button class="btn" id="st-mail">Email</button><button class="btn" id="st-wa">WhatsApp</button><button class="btn primary" id="st-pdf">Download PDF</button><button class="btn" id="st-print">Print</button></div></div><div id="st">'+statementHTML(id,'')+'</div>');
   $('#sf').addEventListener('change',function(e){stFrom=e.target.value;$('#st').innerHTML=statementHTML(id,stFrom)});
   $('#st-print').addEventListener('click',function(){doPrint('Statement - '+c.name)});
+  $('#st-pdf').addEventListener('click',function(){downloadSpec(stmtPdfSpec(id,stFrom))});
   $('#st-wa').addEventListener('click',function(){waStatement(id)});
   $('#st-mail').addEventListener('click',function(){
     var s=S.settings,bal=custBalance(id);
-    emailModal('Statement from '+(s.company||'us'),'Hi '+(c.contact||c.name)+',\n\nPlease find attached your statement. The amount due is '+fmt(bal)+'.\n\n'+(s.bank?'Banking details:\n'+s.bank+'\n\n':'')+'Kind regards,\n'+(s.company||''),c.email,'Statement - '+c.name,'statement');
+    emailModal('Statement from '+(s.company||'us'),'Hi '+(c.contact||c.name)+',\n\nPlease find attached your statement. The amount due is '+fmt(bal)+'.\n\n'+(s.bank?'Banking details:\n'+s.bank+'\n\n':'')+'Kind regards,\n'+(s.company||''),c.email,'Statement - '+c.name,'statement',stmtPdfSpec(id,stFrom));
   });
 }
 
@@ -1110,13 +1432,15 @@ function vSettings(){
     '<div class="field"><label>Logo</label><div class="row" style="align-items:center;flex-wrap:wrap"><div id="logoBox">'+(s.logo?'<img src="'+s.logo+'" alt="Logo" style="max-height:56px;max-width:180px;background:#fff;border:1px solid var(--line);padding:4px;border-radius:4px">':'<span class="muted">No logo yet</span>')+'</div><button type="button" class="btn sm" data-act="logo">Choose logo file</button>'+(s.logo?'<button type="button" class="btn sm danger" data-act="logo-clear">Remove</button>':'')+'</div></div></section>'+
     '<section style="display:grid;gap:12px"><h2>Tax and money</h2><div class="grid3">'+inp('taxName','Tax name (VAT)')+inp('taxRate','Tax rate %','number','step="any" min="0"')+inp('taxNo','Your tax / VAT number')+'</div><div class="grid3">'+inp('currency','Currency symbol')+'<div class="field"><label>&nbsp;</label><label class="check"><input type="checkbox" name="pricesInclTax" '+(s.pricesInclTax?'checked':'')+'> Prices already include tax</label></div></div></section>'+
     '<section style="display:grid;gap:12px"><h2>Numbering and terms</h2><div class="grid3">'+inp('invPrefix','Invoice prefix')+inp('invNext','Next invoice number','number','min="1"')+inp('termsDays','Payment terms (days)','number','min="0"')+inp('quotePrefix','Quote prefix')+inp('quoteNext','Next quote number','number','min="1"')+inp('quoteDays','Quote valid for (days)','number','min="0"')+inp('invPad','Invoice number digits','number','min="0" max="10"')+inp('quotePad','Quote number digits','number','min="0" max="10"')+inp('orderPrefix','Order prefix')+inp('orderNext','Next order number','number','min="1"')+inp('orderPad','Order number digits','number','min="0" max="10"')+'</div></section>'+
-    '<section style="display:grid;gap:12px"><h2>Banking details and default notes</h2><div class="field"><label for="s-bank">Banking details (printed on invoices)</label><textarea id="s-bank" name="bank" rows="4" placeholder="Bank, account name, account number, branch code">'+esc(s.bank)+'</textarea></div><div class="grid2"><div class="field"><label for="s-invNotes">Default note on invoices</label><textarea id="s-invNotes" name="invNotes" rows="3">'+esc(s.invNotes)+'</textarea></div><div class="field"><label for="s-quoteNotes">Default note on quotes</label><textarea id="s-quoteNotes" name="quoteNotes" rows="3">'+esc(s.quoteNotes)+'</textarea></div></div></section></form>'+
+    '<section style="display:grid;gap:12px"><h2>Banking details and default notes</h2><div class="field"><label for="s-bank">Banking details (printed on invoices)</label><textarea id="s-bank" name="bank" rows="4" placeholder="Bank, account name, account number, branch code">'+esc(s.bank)+'</textarea></div><div class="grid2"><div class="field"><label for="s-invNotes">Default note on invoices</label><textarea id="s-invNotes" name="invNotes" rows="3">'+esc(s.invNotes)+'</textarea></div><div class="field"><label for="s-quoteNotes">Default note on quotes</label><textarea id="s-quoteNotes" name="quoteNotes" rows="3">'+esc(s.quoteNotes)+'</textarea></div></div></section>'+
+    '<section style="display:grid;gap:10px"><h2>PDF copies of invoices</h2><label class="check"><input type="checkbox" name="autoPdf" '+(s.autoPdf?'checked':'')+'> Automatically save a PDF every time I save a new invoice</label><p class="note" style="margin:0">The PDF is named like <b>INV-0006 - Customer Name.pdf</b>. In a web browser it goes to your Downloads folder. In the Windows program it goes to the folder chosen below. On the phone it goes to Documents / InvoiceFlow. You can always make one by hand with the <b>Download PDF</b> button on any invoice.</p><div id="pdfFolderBox"></div></section></form>'+
     pinCardHTML()+syncCardHTML()+'<div class="card pad" style="margin-top:16px"><h2 style="margin-bottom:6px">Backup and data</h2><p class="note" style="margin:0 0 12px">Everything is stored inside this web browser on this computer. It is not sent anywhere. If you move the file, use another browser, or clear browser data, your invoices will not be there. Download a backup regularly and keep it somewhere safe. Use <b>Restore</b> to load a backup on any computer.</p><div class="btns"><button class="btn primary" data-act="backup">Download backup</button><button class="btn" data-act="restore">Restore from backup</button><button class="btn" data-act="import">Import history (CSV files)</button><button class="btn" data-act="sample">Load sample data</button><button class="btn danger" data-act="erase">Erase everything</button></div><p class="note" style="margin:10px 0 0">Last backup: '+(s.lastBackup?fdate(s.lastBackup):'never')+'</p></div>');
+  fillPdfFolder();
   $('#s-save').addEventListener('click',function(){
     var f=new FormData($('#sform')),o={};f.forEach(function(v,k){o[k]=v});
     ['taxRate','invNext','quoteNext','orderNext','termsDays','quoteDays','invPad','quotePad','orderPad'].forEach(function(k){o[k]=+o[k]||0});
     o.invNext=Math.max(1,o.invNext);o.quoteNext=Math.max(1,o.quoteNext);o.orderNext=Math.max(1,o.orderNext);
-    o.pricesInclTax=f.get('pricesInclTax')==='on';
+    o.pricesInclTax=f.get('pricesInclTax')==='on';o.autoPdf=f.get('autoPdf')==='on';
     ['company','email','phone','website','regNo','taxName','taxNo','currency','invPrefix','quotePrefix','orderPrefix'].forEach(function(k){o[k]=String(o[k]||'').trim()});
     if(!o.taxName)o.taxName='VAT';if(!o.currency)o.currency='R';
     Object.assign(S.settings,o);save();toast('Settings saved');drawNav('settings');
@@ -1294,7 +1618,7 @@ function convertQuote(id){
   var t=todayISO(),terms=+S.settings.termsDays,c=cust(q.customerId);
   if(c&&c.termsDays!==''&&c.termsDays!=null)terms=+c.termsDays;
   var inv={id:uid(),type:'invoice',number:nextNumber('invoice'),customerId:q.customerId,date:t,terms:terms,due:addDays(t,terms),ref:q.ref||q.number,salesperson:q.salesperson||'',lines:clone(q.lines),discount:q.discount,shipping:q.shipping,notes:S.settings.invNotes,payments:[],credits:[],refunds:[],status:'open',fromQuote:q.id,createdAt:Date.now()};
-  bumpNumber('invoice');S.docs.push(inv);q.status='invoiced';save();toast('Invoice '+inv.number+' created from '+q.number);location.hash='#view/'+inv.id;
+  bumpNumber('invoice');S.docs.push(inv);q.status='invoiced';save();toast('Invoice '+inv.number+' created from '+q.number);setTimeout(function(){autoPdfSave(inv)},300);location.hash='#view/'+inv.id;
 }
 
 /* ---------- global event handling ---------- */
@@ -1327,7 +1651,7 @@ document.addEventListener('click',function(e){
       case 'sync-now':syMsg='';syChip();if(SY.dirty)syPush();else syPull().then(function(){toast('Checked. Everything is up to date.')});break;
       case 'sync-off':ask('Disconnect','Disconnect this computer from the online copy? Your data stays on this computer and online, but they will no longer match automatically.','Disconnect').then(function(ok){if(ok){SY=null;try{localStorage.removeItem(SYNC_KEY)}catch(e){}syChip();route()}});break;
       case 'stmt-wa':waStatement(id);break;
-      case 'stmt-mail':var sc=cust(id),sb=custBalance(id),ss=S.settings;emailModal('Statement from '+(ss.company||'us'),'Hi '+(sc.contact||sc.name)+',\n\nPlease find attached your statement. The amount due is '+fmt(sb)+'.\n\n'+(ss.bank?'Banking details:\n'+ss.bank+'\n\n':'')+'Kind regards,\n'+(ss.company||''),sc.email,'Statement - '+sc.name,'statement');break;
+      case 'stmt-mail':var sc=cust(id),sb=custBalance(id),ss=S.settings;emailModal('Statement from '+(ss.company||'us'),'Hi '+(sc.contact||sc.name)+',\n\nPlease find attached your statement. The amount due is '+fmt(sb)+'.\n\n'+(ss.bank?'Banking details:\n'+ss.bank+'\n\n':'')+'Kind regards,\n'+(ss.company||''),sc.email,'Statement - '+sc.name,'statement',stmtPdfSpec(id,''));break;
       case 'pay-tab':PT=t.dataset.tab;route();break;
       case 'del-refund':e.stopPropagation();(function(pid){var d=docById(id),r=d.refunds.find(function(x){return x.id===pid});if(!r)return;auditModal('Delete refund','Delete the refund of <b>'+fmt(r.amount)+'</b> ('+fdate(r.date)+') on '+esc(d.number)+'? The invoice balance will change back.','Delete refund',function(by,reason){d.refunds=d.refunds.filter(function(x){return x.id!==pid});addEdit(d,by,reason,'Deleted refund of '+fmt(r.amount)+' ('+fdate(r.date)+')');save();route()})})(t.dataset.p);break;
       case 'del-credit':e.stopPropagation();(function(pid){var d=docById(id),c=d.credits.find(function(x){return x.id===pid});if(!c)return;auditModal('Delete return / credit','Delete the credit of <b>'+fmt(c.amount)+'</b> ('+fdate(c.date)+') on '+esc(d.number)+'? The invoice balance will go back up.','Delete credit',function(by,reason){d.credits=d.credits.filter(function(x){return x.id!==pid});addEdit(d,by,reason,'Deleted credit of '+fmt(c.amount)+' ('+fdate(c.date)+')');save();route()})})(t.dataset.p);break;
@@ -1337,6 +1661,8 @@ document.addEventListener('click',function(e){
       case 'convert':convertQuote(id);break;
       case 'quote-status':var q=docById(id);q.status=t.dataset.s;save();toast(T(q.type).Word+' marked '+t.dataset.s);route();break;
       case 'email':emailDoc(docById(id));break;
+      case 'pdf':downloadSpec(docPdfSpec(docById(id)));break;
+      case 'pdf-folder':window.InvoiceFlowDesktop.choosePdfFolder().then(fillPdfFolder);break;
       case 'print':var pd=docById(id);doPrint(docTitle(pd));break;
       case 'add-line':draft.lines.push(blankLine());$('#lines').insertAdjacentHTML('beforeend',lineRow(draft.lines[draft.lines.length-1],draft.lines.length-1));var last=$$('#lines [data-lf=desc]').pop();if(last)last.focus();break;
       case 'rm-line':var i=+t.closest('tr').dataset.i;if(draft.lines.length===1)draft.lines[0]=blankLine();else draft.lines.splice(i,1);renderLines();recalcUI();break;
