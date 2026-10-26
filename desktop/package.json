@@ -17,7 +17,7 @@
     "appId": "za.co.signgirls.invoiceflow",
     "productName": "InvoiceFlow",
     "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["main.js", "www/**/*", "package.json"],
+    "files": ["main.js", "preload.js", "www/**/*", "package.json"],
     "win": { "icon": "build/icon.ico", "target": ["portable", "nsis"] },
     "portable": { "artifactName": "InvoiceFlow-Portable.exe" },
     "nsis": {
