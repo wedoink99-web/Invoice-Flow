@@ -1,0 +1,71 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Create the Android project
+        working-directory: mobile
+        run: |
+          rm -rf www && cp -r ../www www
+          npm install
+          npx cap add android
+          npx cap sync android
+          PKG=android/app/src/main/java/za/co/signgirls/invoiceflow
+          mkdir -p $PKG
+          cp native/MainActivity.java native/NativePrintPlugin.java $PKG/
+          cp -r android-res/* android/app/src/main/res/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Make the app icons from icon-1024.png
+        working-directory: mobile
+        run: |
+          pip install pillow
+          python3 - <<'PY'
+          from PIL import Image, ImageDraw
+          src = Image.open('icon-1024.png').convert('RGBA')
+          c = src.getpixel((src.width // 2, 6))[:3]
+          res = 'android/app/src/main/res/'
+          for d, l, f in [('mdpi', 48, 108), ('hdpi', 72, 162), ('xhdpi', 96, 216), ('xxhdpi', 144, 324), ('xxxhdpi', 192, 432)]:
+              p = res + 'mipmap-' + d + '/'
+              src.resize((l, l), Image.LANCZOS).save(p + 'ic_launcher.png')
+              n = l * 4
+              mask = Image.new('L', (n, n), 0)
+              ImageDraw.Draw(mask).ellipse((0, 0, n - 1, n - 1), fill=255)
+              rd = Image.new('RGBA', (n, n), (0, 0, 0, 0))
+              rd.paste(Image.new('RGBA', (n, n), c + (255,)), (0, 0), mask)
+              inner = src.resize((int(n * 0.86), int(n * 0.86)), Image.LANCZOS)
+              rd.alpha_composite(inner, ((n - inner.width) // 2, (n - inner.height) // 2))
+              rd.putalpha(mask)
+              rd.resize((l, l), Image.LANCZOS).save(p + 'ic_launcher_round.png')
+              fg = Image.new('RGBA', (f, f), (0, 0, 0, 0))
+              s = int(f * 0.62)
+              fg.alpha_composite(src.resize((s, s), Image.LANCZOS), ((f - s) // 2, (f - s) // 2))
+              fg.save(p + 'ic_launcher_foreground.png')
+          open(res + 'values/ic_launcher_background.xml', 'w').write('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#%02X%02X%02X</color>\n</resources>\n' % c)
+          PY
+      - name: Build the APK
+        working-directory: mobile/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+      - name: Rename the APK
+        run: cp mobile/android/app/build/outputs/apk/debug/app-debug.apk InvoiceFlow.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InvoiceFlow-Android
+          path: InvoiceFlow.apk
