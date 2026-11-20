@@ -9,7 +9,16 @@ let win = null;
 const external = (url) => /^(https?|mailto|tel):/i.test(url);
 
 function createWindow() {
-  Menu.setApplicationMenu(null);
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { role: 'appMenu' },
+      { role: 'editMenu' },
+      { label: 'View', submenu: [{ role: 'reload' }, { role: 'togglefullscreen' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }] },
+      { role: 'windowMenu' }
+    ]));
+  } else {
+    Menu.setApplicationMenu(null);
+  }
   win = new BrowserWindow({
     width: 1280,
     height: 850,
@@ -81,6 +90,13 @@ ipcMain.handle('licence:machine', () => new Promise((resolve) => {
     try { fs.writeFileSync(machineFile(), JSON.stringify({ m })); } catch (e) {}
     resolve(m);
   };
+  if (process.platform === 'darwin') {
+    return execFile('/usr/sbin/ioreg', ['-rd1', '-c', 'IOPlatformExpertDevice'], { timeout: 8000 }, (err, out) => {
+      const mt = !err && /"IOPlatformUUID"\s*=\s*"([0-9A-Fa-f-]{20,})"/.exec(String(out));
+      if (!mt) return fallback();
+      resolve(fmtMachine(crypto.createHash('sha256').update('tillflow-machine:' + mt[1]).digest('hex')));
+    });
+  }
   if (process.platform !== 'win32') return fallback();
   execFile('reg', ['query', 'HKLM\\SOFTWARE\\Microsoft\\Cryptography', '/v', 'MachineGuid'], { windowsHide: true, timeout: 8000 }, (err, out) => {
     const mt = !err && /MachineGuid\s+REG_SZ\s+(\S+)/i.exec(String(out));
