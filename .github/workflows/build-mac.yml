@@ -1,0 +1,32 @@
+name: Build Mac App
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Copy the app into the desktop folder and install
+        working-directory: desktop
+        run: |
+          rm -rf www
+          cp -R ../www www
+          npm install
+      - name: Build the Mac installers
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx electron-builder --mac dmg --x64 --arm64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InvoiceFlow-Mac
+          path: |
+            desktop/dist/InvoiceFlow-Mac-arm64.dmg
+            desktop/dist/InvoiceFlow-Mac-x64.dmg
