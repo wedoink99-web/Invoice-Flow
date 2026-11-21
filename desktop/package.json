@@ -54,6 +54,7 @@
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
       "artifactName": "InvoiceFlow-Mac-${arch}.${ext}"
-    }
+    },
+    "afterPack": "adhoc-sign.js"
   }
 }
